@@ -1,16 +1,17 @@
+# Базовый образ Python 3.11
 FROM python:3.11-slim
 
 # Обновляем pip
 RUN pip install --upgrade pip
 
-# Рабочая директория
+# Рабочая директория внутри контейнера
 WORKDIR /app
 
-# Копируем проект
+# Копируем все файлы проекта
 COPY . .
 
 # Устанавливаем зависимости
 RUN pip install -r requirements.txt
 
 # Запуск бота
-CMD ["python", "nightwor/bot.py"]
+CMD ["python", "bot.py"]
