@@ -1,150 +1,122 @@
-import random
 import asyncio
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils import executor
+from datetime import datetime, timedelta
+import pytz
+import matplotlib.pyplot as plt
+import io
 
-from config import BOT_TOKEN, ADMIN_ID
-from database import init_db, append_value, get_user_stats
+TOKEN = "YOUR_BOT_TOKEN"
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+bot = Bot(token=TOKEN)
+dp = Dispatcher(bot)
 
-active_chats = {}
+# Сессии пользователей
+user_sessions = {}  # chat_id: {"messages": [], "mood_scores": [], "emotions": []}
 
-def get_support_phrase():
-    try:
-        with open("data/support_phrases.txt", "r", encoding="utf-8") as f:
-            return random.choice(f.readlines()).strip()
-    except:
-        return "Ты не один. Всё будет хорошо."
+# Простейший словарь эмоций для анализа текста
+emotion_keywords = {
+    "грусть": "😢",
+    "печаль": "😢",
+    "тревога": "😟",
+    "страх": "😨",
+    "радость": "😊",
+    "счастье": "😁",
+    "устал": "😴",
+    "злость": "😠",
+    "раздражение": "😤",
+}
 
-end_chat_kb = InlineKeyboardMarkup(
-    inline_keyboard=[
-        [InlineKeyboardButton(text="Завершить общение ❌", callback_data="end_chat")]
-    ]
-)
+# Ответы на эмоции
+emotion_responses = {
+    "😢": "Я вижу, тебе грустно. Держись, я рядом.",
+    "😟": "Тревога понятна. Попробуй глубоко вдохнуть и выдохнуть.",
+    "😨": "Страхи бывают у всех. Всё будет хорошо.",
+    "😊": "Радость — здорово! Продолжай в том же духе.",
+    "😁": "Супер! Ты сегодня в отличном настроении.",
+    "😴": "Усталость понятна. Отдохни немного.",
+    "😠": "Злость — нормальная эмоция. Давай успокоимся вместе.",
+    "😤": "Раздражение есть у всех. Попробуй расслабиться."
+}
 
-rate_kb = InlineKeyboardMarkup(
-    inline_keyboard=[
-        [InlineKeyboardButton(text=str(i), callback_data=f"rate_{i}") for i in range(1,6)]
-    ]
-)
+# ===== Функции =====
 
-# ------------------------ Команды ------------------------
+def detect_emotions(text: str):
+    """Простейший анализ эмоций по ключевым словам"""
+    text_lower = text.lower()
+    detected = []
+    for word, emoji in emotion_keywords.items():
+        if word in text_lower:
+            detected.append(emoji)
+    return detected if detected else ["😐"]  # 😐 - нейтральное
 
-@dp.message(Command("start"))
-async def start_cmd(message: types.Message):
-    await message.answer(
-        "🌙 Добро пожаловать в Night Word!\n"
-        "Тихое пространство для мыслей, поддержки и историй.\n\n"
-        "Введи /help чтобы узнать все возможности."
-    )
+def add_to_session(chat_id, text, detected_emotions):
+    session = user_sessions.setdefault(chat_id, {"messages": [], "mood_scores": [], "emotions": []})
+    session["messages"].append(text)
+    # Для простоты настроение = количество положительных - количество отрицательных
+    mood_score = sum([1 if e in ["😊", "😁"] else -1 if e in ["😢", "😟", "😨", "😠", "😤"] else 0 for e in detected_emotions])
+    session["mood_scores"].append(mood_score)
+    session["emotions"].extend(detected_emotions)
 
-@dp.message(Command("help"))
-async def help_cmd(message: types.Message):
-    await message.answer(
-        "/help — описание всех функций\n"
-        "/about — о проекте\n"
-        "/thought — случайная мысль\n"
-        "/quote — поддерживающая фраза\n"
-        "/my_story — отправить свою историю\n"
-        "/feel — оценка состояния\n"
-        "/feedback — оставить отзыв\n"
-        "/support — связь с поддержкой\n"
-        "/human_support — общение с живым человеком\n"
-        "/ai — AI-компаньон (в разработке)\n"
-        "/ai_support — AI-поддержка (в разработке)"
-    )
+# ===== Команды =====
+@dp.message_handler(commands=['start'])
+async def cmd_start(message: types.Message):
+    await message.reply("Привет! Я Night Word. Расскажи, как твои дела, и я постараюсь помочь и поддержать.")
 
-@dp.message(Command("about"))
-async def about_cmd(message: types.Message):
-    await message.answer(
-        "🌘 Night Word — пространство, где каждый может поделиться собой.\n"
-        "Мы создаём место для историй, поддержки и безопасного общения."
-    )
-
-@dp.message(Command("thought"))
-async def thought_cmd(message: types.Message):
-    await message.answer("💭 Мысль дня:\n" + get_support_phrase())
-
-@dp.message(Command("quote"))
-async def quote_cmd(message: types.Message):
-    await message.answer("✨ " + get_support_phrase())
-
-@dp.message(Command("my_story"))
-async def story_cmd(message: types.Message):
-    await message.answer(
-        "📝 Отправь свою историю одним сообщением.\n"
-        "Мы сохраним её в тишине Night Word."
-    )
-
-@dp.message(Command("feel"))
-async def feel_cmd(message: types.Message):
-    await message.answer("Как ты себя чувствуешь от 1 до 10?")
-
-@dp.message(Command("feedback"))
-async def feedback_cmd(message: types.Message):
-    await message.answer("✍ Напиши свой отзыв. Он важен.")
-
-@dp.message(Command("support"))
-async def support_cmd(message: types.Message):
-    await message.answer("Связь с поддержкой: @your_support_username")
-
-@dp.message(Command("ai"))
-async def ai_cmd(message: types.Message):
-    await message.answer("🤖 AI-компаньон пока находится в разработке.")
-
-@dp.message(Command("ai_support"))
-async def ai_s_cmd(message: types.Message):
-    await message.answer("🤖 AI-поддержка скоро появится.")
-
-@dp.message(Command("human_support"))
-async def human_support(message: types.Message):
-    user_id = message.from_user.id
-    active_chats[user_id] = ADMIN_ID
-    await message.answer(
-        "🔗 Ты подключён к живому человеку.\n"
-        "Можешь писать. Я передам сообщение оператору.",
-        reply_markup=end_chat_kb,
-    )
-    await bot.send_message(ADMIN_ID, f"🟢 Новый диалог с пользователем {user_id}.")
-
-@dp.message()
-async def relay_messages(message: types.Message):
-    user_id = message.from_user.id
-    if user_id in active_chats:
-        await bot.send_message(ADMIN_ID, f"Сообщение от {user_id}:\n{message.text}")
+@dp.message_handler(commands=['stats'])
+async def cmd_stats(message: types.Message):
+    session = user_sessions.get(message.chat.id)
+    if not session:
+        await message.reply("Пока нет статистики. Попробуй написать что-то, и я буду отслеживать твои эмоции.")
         return
-    if user_id == ADMIN_ID and message.reply_to_message:
-        text = message.text
-        try:
-            reply_user = int(message.reply_to_message.text.split()[3])
-            await bot.send_message(reply_user, "💬 Ответ оператора:\n" + text)
-        except:
-            pass
+    # График настроения
+    fig, ax = plt.subplots()
+    ax.plot(range(1, len(session["mood_scores"])+1), session["mood_scores"], marker='o', color='blue')
+    ax.set_title("Динамика настроения")
+    ax.set_xlabel("Сообщения")
+    ax.set_ylabel("Оценка настроения")
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    await bot.send_photo(message.chat.id, buf)
+    buf.close()
+    # Текстовая статистика
+    total_msgs = len(session["messages"])
+    emotions_count = {e: session["emotions"].count(e) for e in set(session["emotions"])}
+    emotions_text = "\n".join([f"{e}: {count}" for e, count in emotions_count.items()])
+    await message.reply(f"Всего сообщений: {total_msgs}\nЭмоции:\n{emotions_text}")
 
-@dp.callback_query(lambda c: c.data == "end_chat")
-async def end_chat(call: types.CallbackQuery):
-    user_id = call.from_user.id
-    if user_id in active_chats:
-        del active_chats[user_id]
-    await call.message.answer("❌ Общение завершено.\nПоставьте оценку:", reply_markup=rate_kb)
-    await call.answer()
+# ===== Основной обработчик сообщений =====
+@dp.message_handler()
+async def handle_message(message: types.Message):
+    detected = detect_emotions(message.text)
+    add_to_session(message.chat.id, message.text, detected)
+    # Отвечаем на эмоции
+    responses = [emotion_responses[e] for e in detected if e in emotion_responses]
+    await message.reply("\n".join(responses))
 
-@dp.callback_query(lambda c: c.data.startswith("rate_"))
-async def rating(call: types.CallbackQuery):
-    user_id = call.from_user.id
-    rating = call.data.split("_")[1]
-    append_value(user_id, "ratings", rating)
-    await call.message.answer("Спасибо! Напиши отзыв:")
-    await call.answer()
+# ===== Автосоветы =====
+async def daily_tip_sender():
+    await bot.wait_until_ready()
+    tz = pytz.timezone('Europe/Kiev')
+    daily_tips = [
+        "Сделай короткую прогулку на свежем воздухе.",
+        "Попробуй 5 минут медитации.",
+        "Запиши 3 вещи, за которые благодарен сегодня.",
+        "Дыхательное упражнение: вдох 4 сек, выдох 6 сек.",
+    ]
+    while True:
+        now = datetime.now(tz)
+        target = now.replace(hour=8, minute=0, second=0, microsecond=0)
+        if now > target:
+            target += timedelta(days=1)
+        wait_seconds = (target - now).total_seconds()
+        await asyncio.sleep(wait_seconds)
+        for chat_id in user_sessions.keys():
+            await bot.send_message(chat_id, f"Доброе утро! Совет дня: {random.choice(daily_tips)}")
 
-# ------------------------ Старт бота ------------------------
-
-async def main():
-    init_db()
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+# ===== Запуск бота =====
+if __name__ == '__main__':
+    loop = asyncio.get_event_loop()
+    loop.create_task(daily_tip_sender())
+    executor.start_polling(dp, skip_updates=True)
